@@ -258,12 +258,13 @@ def postprocess_output(output, threshold=0.55, input_height=288, input_width=512
 def visualize_heatmaps(output, seq=9, input_height=288, input_width=512):
     # Показывает только центральную тепловую карту (для seq=9 — это 5 кадр, индекс 4)
     center_idx = seq // 2
+    center_idx = seq - 1 
     heatmap = output[center_idx, :, :]
     heatmap_norm = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX)
     heatmap_uint8 = heatmap_norm.astype(np.uint8)
-    heatmap_color = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-    cv2.imshow(f'Heatmap Center Frame {center_idx+1}', heatmap_color)
-    cv2.waitKey(1)
+    return  cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    #cv2.imshow(f'Heatmap Center Frame {center_idx+1}', heatmap_color)
+    #cv2.waitKey(1)
 
 def draw_track(frame, track_points, current_color=(0, 0, 255), history_color=(255, 0, 0), center_color=(0,255,0), current_ball_bbox=None):
     points = list(track_points)
@@ -364,6 +365,14 @@ def main():
 
                 if args.visualize or out_writer is not None:
                     vis_frame = frame.copy()
+                    # Преобразование в grayscale
+                    vis_frame = cv2.cvtColor(vis_frame, cv2.COLOR_BGR2GRAY)
+                    
+                    vis_frame = cv2.cvtColor(vis_frame, cv2.COLOR_GRAY2BGR)
+
+
+                    #visualize_heatmaps(output, 3)
+
                     vis_frame = draw_track(vis_frame, track_points, current_ball_bbox=current_ball_bbox)
                     if args.visualize:
                         cv2.namedWindow("Tracking", cv2.WINDOW_NORMAL)
@@ -372,9 +381,10 @@ def main():
                             stop = True
                             break
 
-                    visualize_heatmaps(output, 3)
                     if out_writer is not None:
-                        out_writer.write(vis_frame)
+                        # Для VideoWriter нужен 3-канальный формат
+                        vis_frame_to_write = cv2.cvtColor(vis_frame_gray, cv2.COLOR_GRAY2BGR)
+                        out_writer.write(vis_frame_to_write)
 
         end_time = time.time()
         batch_time = end_time - start_time

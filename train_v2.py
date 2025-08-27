@@ -63,6 +63,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="TrackNet Training")
     parser.add_argument("--data", type=str, required=True)
     parser.add_argument("--resume", type=str)
+    parser.add_argument("--val_data", type=str, default=None, help="Validation dataset path (optional)")
     parser.add_argument("--split", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=26)
     parser.add_argument("--batch", type=int, default=3)
@@ -234,25 +235,36 @@ class Trainer:
         )
         print(f"Dataset loaded: \033[94m{len(dataset)}\033[0m samples {self.args.grayscale} sequences  {self.args.seq}")
 
-        print("Splitting dataset...")
-        torch.manual_seed(self.args.seed)
-        train_size = int(self.args.split * len(dataset))
-        train_ds, val_ds = random_split(
-            dataset, [train_size, len(dataset) - train_size]
-        )
+        if self.args.val_data:
+            print("Loading separate validation dataset...")
+            val_dataset = FrameHeatmapDataset(
+                self.args.val_data,
+                seq=self.args.seq,
+                grayscale=self.args.grayscale
+            )
+            train_ds = dataset
+            val_ds = val_dataset
+        else:
+            print("Splitting dataset...")
+            torch.manual_seed(self.args.seed)
+            train_size = int(self.args.split * len(dataset))
+            train_ds, val_ds = random_split(
+                dataset, [train_size, len(dataset) - train_size]
+            )
 
         print("Creating data loaders...")
         self.train_loader = DataLoader(
             train_ds,
             batch_size=self.args.batch,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.args.workers,
             pin_memory=self.device.type == "cuda",
         )
+
         self.val_loader = DataLoader(
             val_ds,
             batch_size=self.args.batch,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.args.workers,
             pin_memory=self.device.type == "cuda",
         )

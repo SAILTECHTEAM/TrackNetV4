@@ -47,7 +47,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
-from preprocessing.tracknet_dataset import FrameHeatmapDataset
+from preprocessing.tracknet_datasetv2 import FrameHeatmapDataset
 
 # Choose the version of TrackNet model you want to use
 from model.tracknet_v4 import TrackNet
@@ -55,6 +55,7 @@ from model.vballnet_v1 import VballNetV1
 from model.vballnet_v1c import VballNetV1c 
 from model.vballnet_v1d import VballNetV1d 
 from model.vballnetfast_v1 import VballNetFastV1  # Import the fast version
+from model.vballnet_v3 import VballNetV3 
 
 
 def parse_args():
@@ -151,6 +152,15 @@ class TrackNetTester:
                 in_dim=in_dim,
                 out_dim=out_dim,
                 fusion_layer_type="TypeA"
+            ).to(self.device)
+        elif 'VballNetV3' in self.args.model:
+            in_dim = seq if grayscale else seq * 3
+            out_dim = seq
+            self.model = VballNetV3(
+                height=288,
+                width=512,
+                in_dim=in_dim,
+                out_dim=out_dim,
             ).to(self.device)
         elif 'VballNetV1d' in self.args.model:
             in_dim = seq if grayscale else seq * 3

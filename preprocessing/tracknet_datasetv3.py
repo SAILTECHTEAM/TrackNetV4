@@ -93,7 +93,9 @@ class FrameHeatmapDataset(Dataset):
                         continue
                     if not self.grayscale:
                         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    img = img.astype(np.uint8)  # Use uint8 to save memory
+                    
+
+                    #img = img.astype(np.uint8)  # Use uint8 to save memory
 
                     # Load heatmap
                     heatmap = cv2.imread(str(heatmap_path), cv2.IMREAD_GRAYSCALE)

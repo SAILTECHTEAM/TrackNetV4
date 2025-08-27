@@ -25,15 +25,11 @@ class FrameHeatmapDataset(Dataset):
 
         # Define augmentation pipeline for inputs (RGB images)
         self.transform = transform or transforms.Compose([
-    #       transforms.RandomHorizontalFlip(p=0.5),  # Зеркалирование лево-право с вероятностью 50%
-    #       transforms.RandomRotation(degrees=10),   # Поворот на ±10 градусов
             transforms.ToTensor()                   # Нормализация в [0,1]
         ])
 
         # Define augmentation pipeline for heatmaps (grayscale)
         self.heatmap_transform = heatmap_transform or transforms.Compose([
-    #        transforms.RandomHorizontalFlip(p=0.5),  # Зеркалирование лево-право с вероятностью 50%
-    #        transforms.RandomRotation(degrees=10),   # Поворот на ±10 градусов
             transforms.ToTensor()                   # Нормализация в [0,1]
         ])
 
