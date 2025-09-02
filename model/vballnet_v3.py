@@ -67,6 +67,8 @@ class MotionPrompt(nn.Module):
             else:
                 # Central difference for intermediate frames
                 frame_diff = (grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t - 1]) 
+            
+            frame_diff  *= 2
             attention_map.append(power_normalization(frame_diff, self.a, self.b))
 
         attention_map = torch.stack(attention_map, dim=1)  # Shape: (batch, num_frames, height, width)
