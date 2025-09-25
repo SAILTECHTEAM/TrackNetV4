@@ -42,15 +42,15 @@ class MotionPrompt(nn.Module):
     def forward(self, video_seq):
         loss = torch.tensor(0.0, device=video_seq.device)
         video_seq = rearrange_tensor(video_seq, self.input_permutation)
-        norm_seq = video_seq * 0.225 + 0.45
+        #norm_seq = video_seq * 0.225 + 0.45
 
         if self.mode == "rgb":
             idx_list = [self.color_map[idx] for idx in self.input_color_order]
             weights = self.gray_scale[idx_list].to(video_seq.device)
-            grayscale_video_seq = torch.einsum("btcwh,c->btwh", norm_seq, weights)
+            grayscale_video_seq = torch.einsum("btcwh,c->btwh", video_seq, weights)
         else:  # grayscale mode
-            #grayscale_video_seq = video_seq[:, :, 0, :, :]  # Single channel per frame
-            grayscale_video_seq = norm_seq[:, :, 0, :, :]  # Single channel per frame
+            grayscale_video_seq = video_seq[:, :, 0, :, :]  # Single channel per frame
+            #grayscale_video_seq = norm_seq[:, :, 0, :, :]  # Single channel per frame
 
         # Compute median across all frames
         median_frame = torch.median(grayscale_video_seq, dim=1, keepdim=True).values
