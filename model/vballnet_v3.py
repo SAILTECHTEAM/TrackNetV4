@@ -38,8 +38,60 @@ class MotionPrompt(nn.Module):
         self.a = nn.Parameter(torch.tensor(0.1))
         self.b = nn.Parameter(torch.tensor(0.0))
         self.lambda1 = penalty_weight
-
+        self.output_channels = 2  # Теперь 2 канала: [positive, negative]
+   
     def forward(self, video_seq):
+        loss = torch.tensor(0.0, device=video_seq.device)
+        video_seq = rearrange_tensor(video_seq, self.input_permutation)
+
+        if self.mode == "rgb":
+            idx_list = [self.color_map[idx] for idx in self.input_color_order]
+            weights = self.gray_scale[idx_list].to(video_seq.device)
+            grayscale_video_seq = torch.einsum("btcwh,c->btwh", video_seq, weights)
+        else:
+            grayscale_video_seq = video_seq[:, :, 0, :, :]
+
+        median_frame = torch.median(grayscale_video_seq, dim=1, keepdim=True).values
+
+        # Теперь храним два канала
+        pos_maps = []
+        neg_maps = []
+
+        for t in range(self.num_frames):
+            if t == 0:
+                diff = grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t]
+            elif t == self.num_frames - 1:
+                diff = grayscale_video_seq[:, t] - grayscale_video_seq[:, t - 1]
+            else:
+                diff = (grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t - 1])
+
+            # Разделяем на положительную и отрицательную части
+            pos = F.relu(diff)          # Только положительные изменения
+            neg = F.relu(-diff)         # Только отрицательные изменения
+
+            # Нормализуем каждую часть отдельно (можно использовать ту же функцию)
+            pos_norm = power_normalization(pos, self.a, self.b)
+            neg_norm = power_normalization(neg, self.a, self.b)
+
+            pos_maps.append(pos_norm)
+            neg_maps.append(neg_norm)
+
+        # Собираем в тензор (B, T, 2, H, W)
+        attention_map = torch.stack([
+            torch.stack(pos_maps, dim=1),   # (B, T, H, W)
+            torch.stack(neg_maps, dim=1)
+        ], dim=2)  # shape: (B, T, 2, H, W)
+
+        if self.training:
+            B, T, _, H, W = attention_map.shape
+            temp_diff = attention_map[:, 1:] - attention_map[:, :-1]
+            temporal_loss = torch.sum(temp_diff ** 2) / (H * W * (T - 1) * B * 2)
+            loss = self.lambda1 * temporal_loss
+
+        return attention_map, loss  # Теперь 2 канала!
+
+
+    def old__forward(self, video_seq):
         loss = torch.tensor(0.0, device=video_seq.device)
         video_seq = rearrange_tensor(video_seq, self.input_permutation)
         #norm_seq = video_seq * 0.225 + 0.45
@@ -82,7 +134,7 @@ class MotionPrompt(nn.Module):
 
         return attention_map, loss
 # FusionLayerTypeA Module
-class FusionLayerTypeA(nn.Module):
+class OLDFusionLayerTypeA(nn.Module):
     """
     A module that incorporates motion using attention maps - version 1.
     Applies attention map of current frame t to feature map of frame t.
@@ -97,6 +149,32 @@ class FusionLayerTypeA(nn.Module):
         for t in range(min(self.num_frames, self.out_dim)):
             outputs.append(feature_map[:, t, :, :] * attention_map[:, t, :, :])  # Use attention map of current frame
         return torch.stack(outputs, dim=1)
+
+class FusionLayerTypeA(nn.Module):
+    def __init__(self, num_frames, out_dim, motion_channels=2):
+        super().__init__()
+        self.num_frames = num_frames
+        self.out_dim = out_dim
+        self.motion_channels = motion_channels
+        # Дополнительный свёрточный слой для сжатия внимания до 1 канала (опционально)
+        self.motion_proj = nn.Conv2d(motion_channels, 1, kernel_size=1)
+
+    def forward(self, feature_map, attention_map):
+        # attention_map: (B, T, 2, H, W)
+        B, T, C, H, W = attention_map.shape
+        outputs = []
+
+        for t in range(min(self.num_frames, self.out_dim)):
+            # Берём 2D-внимание для кадра t: (B, 2, H, W)
+            att_t = attention_map[:, t]  # (B, 2, H, W)
+            # Проектируем в 1 канал
+            att_t = self.motion_proj(att_t).squeeze(1)  # (B, H, W)
+            # Применяем к признакам
+            fused = feature_map[:, t, :, :] * torch.sigmoid(att_t)  # или просто *
+            outputs.append(fused)
+
+        return torch.stack(outputs, dim=1)  # (B, T, C_feat, H, W)
+
 
 # VballNetV1 Model
 class VballNetV3(nn.Module):
