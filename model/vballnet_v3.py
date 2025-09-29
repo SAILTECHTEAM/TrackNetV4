@@ -4,28 +4,20 @@ import torch.nn.functional as F
 
 # Utility functions
 def rearrange_tensor(input_tensor, order):
-    """
-    Rearranges the dimensions of a tensor according to the specified order.
-    """
+    """Rearranges the dimensions of a tensor according to the specified order."""
     order = order.upper()
     assert len(set(order)) == 5, "Order must be a 5 unique character string"
     assert all(dim in order for dim in "BCHWT"), "Order must contain all of BCHWT"
     perm = [order.index(dim) for dim in "BTCHW"]
     return input_tensor.permute(*perm)
 
-def power_normalization(input, a, b):
-    """
-    Power normalization function for attention map generation.
-    """
+def power_normalization(input, a, b) -> torch.Tensor:
+    """Power normalization function for attention map generation."""
     return 1 / (1 + torch.exp(-(5 / (0.45 * torch.abs(torch.tanh(a)) + 1e-1)) * (torch.abs(input) - 0.6 * torch.tanh(b))))
 
-# Moti
+# MotionPrompt class
 class MotionPrompt(nn.Module):
-    """
-    A module for generating attention maps from video sequences.
-    Computes frame differences by subtracting the median frame across all frames.
-    Supports grayscale (N frames) and RGB (N×3 channels) modes.
-    """
+    """A module for generating attention and direction maps from video sequences."""
     def __init__(self, num_frames, mode="grayscale", penalty_weight=0.0):
         super().__init__()
         self.num_frames = num_frames
@@ -38,8 +30,8 @@ class MotionPrompt(nn.Module):
         self.a = nn.Parameter(torch.tensor(0.1))
         self.b = nn.Parameter(torch.tensor(0.0))
         self.lambda1 = penalty_weight
-        self.output_channels = 2  # Теперь 2 канала: [positive, negative]
-   
+        self.output_channels = 2  # Two channels: positive and negative
+
     def forward(self, video_seq):
         loss = torch.tensor(0.0, device=video_seq.device)
         video_seq = rearrange_tensor(video_seq, self.input_permutation)
@@ -49,139 +41,79 @@ class MotionPrompt(nn.Module):
             weights = self.gray_scale[idx_list].to(video_seq.device)
             grayscale_video_seq = torch.einsum("btcwh,c->btwh", video_seq, weights)
         else:
-            grayscale_video_seq = video_seq[:, :, 0, :, :]
+            grayscale_video_seq = video_seq[:, :, 0, :, :]  # Single channel per frame
 
+        # Compute median across all frames
         median_frame = torch.median(grayscale_video_seq, dim=1, keepdim=True).values
 
-        # Теперь храним два канала
+        # Store positive and negative maps
         pos_maps = []
         neg_maps = []
 
         for t in range(self.num_frames):
             if t == 0:
+                # Forward difference for first frame
                 diff = grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t]
             elif t == self.num_frames - 1:
+                # Backward difference for last frame
                 diff = grayscale_video_seq[:, t] - grayscale_video_seq[:, t - 1]
             else:
-                diff = (grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t - 1])
+                # Central difference for intermediate frames
+                diff = (grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t - 1]) * 0.5
 
-            # Разделяем на положительную и отрицательную части
-            pos = F.relu(diff)          # Только положительные изменения
-            neg = F.relu(-diff)         # Только отрицательные изменения
-
-            # Нормализуем каждую часть отдельно (можно использовать ту же функцию)
+            # Split into positive and negative components
+            pos = F.relu(diff)  # Positive changes
+            neg = F.relu(-diff)  # Negative changes
             pos_norm = power_normalization(pos, self.a, self.b)
             neg_norm = power_normalization(neg, self.a, self.b)
-
             pos_maps.append(pos_norm)
             neg_maps.append(neg_norm)
 
-        # Собираем в тензор (B, T, 2, H, W)
-        attention_map = torch.stack([
-            torch.stack(pos_maps, dim=1),   # (B, T, H, W)
-            torch.stack(neg_maps, dim=1)
-        ], dim=2)  # shape: (B, T, 2, H, W)
+        # Stack into attention and direction maps
+        residual_maps = torch.stack(pos_maps, dim=1)  # Shape: (B, T, H, W)
+        #residual_maps = torch.stack([pos_norm + neg_norm], dim=1)  # общая активность
+        direction_maps = torch.stack([torch.stack(pos_maps, dim=1), torch.stack(neg_maps, dim=1)], dim=2)  # Shape: (B, T, 2, H, W)
 
         if self.training:
-            B, T, _, H, W = attention_map.shape
-            temp_diff = attention_map[:, 1:] - attention_map[:, :-1]
+            B, T, _, H, W = direction_maps.shape
+            temp_diff = direction_maps[:, 1:] - direction_maps[:, :-1]
             temporal_loss = torch.sum(temp_diff ** 2) / (H * W * (T - 1) * B * 2)
             loss = self.lambda1 * temporal_loss
 
-        return attention_map, loss  # Теперь 2 канала!
+        return residual_maps, direction_maps, loss
 
-
-    def old__forward(self, video_seq):
-        loss = torch.tensor(0.0, device=video_seq.device)
-        video_seq = rearrange_tensor(video_seq, self.input_permutation)
-        #norm_seq = video_seq * 0.225 + 0.45
-
-        if self.mode == "rgb":
-            idx_list = [self.color_map[idx] for idx in self.input_color_order]
-            weights = self.gray_scale[idx_list].to(video_seq.device)
-            grayscale_video_seq = torch.einsum("btcwh,c->btwh", video_seq, weights)
-        else:  # grayscale mode
-            grayscale_video_seq = video_seq[:, :, 0, :, :]  # Single channel per frame
-            #grayscale_video_seq = norm_seq[:, :, 0, :, :]  # Single channel per frame
-
-        # Compute median across all frames
-        median_frame = torch.median(grayscale_video_seq, dim=1, keepdim=True).values
-
-         # Compute central differences for frames t=1 to t=num_frames-2
-        attention_map = []
-        for t in range(self.num_frames):
-            if t == 0:
-                # Forward difference for first frame
-                frame_diff = grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t]
-            elif t == self.num_frames - 1:
-                # Backward difference for last frame
-                frame_diff = grayscale_video_seq[:, t] - grayscale_video_seq[:, t - 1]
-            else:
-                # Central difference for intermediate frames
-                frame_diff = (grayscale_video_seq[:, t + 1] - grayscale_video_seq[:, t - 1]) 
-            
-            frame_diff  *= 2
-            attention_map.append(power_normalization(frame_diff, self.a, self.b))
-
-        attention_map = torch.stack(attention_map, dim=1)  # Shape: (batch, num_frames, height, width)
-        norm_attention = attention_map.unsqueeze(2)
-
-        if self.training:
-            B, T, H, W = grayscale_video_seq.shape
-            temp_diff = norm_attention[:, 1:] - norm_attention[:, :-1]
-            temporal_loss = torch.sum(temp_diff ** 2) / (H * W * (T - 1) * B)
-            loss = self.lambda1 * temporal_loss
-
-        return attention_map, loss
-# FusionLayerTypeA Module
-class OLDFusionLayerTypeA(nn.Module):
-    """
-    A module that incorporates motion using attention maps - version 1.
-    Applies attention map of current frame t to feature map of frame t.
-    """
+# FusionLayerTypeA class
+class FusionLayerTypeA(nn.Module):
+    """A module that incorporates motion and direction using attention maps."""
     def __init__(self, num_frames, out_dim):
         super().__init__()
         self.num_frames = num_frames
         self.out_dim = out_dim
+        self.pos_weight = nn.Parameter(torch.tensor(0.5))  # Weight for positive channel
+        self.neg_weight = nn.Parameter(torch.tensor(0.5))  # Weight for negative channel
 
-    def forward(self, feature_map, attention_map):
+    def forward(self, feature_map, residual_maps, direction_maps=None):
         outputs = []
         for t in range(min(self.num_frames, self.out_dim)):
-            outputs.append(feature_map[:, t, :, :] * attention_map[:, t, :, :])  # Use attention map of current frame
+            # Use residual_maps for attention
+            att_map = residual_maps[:, t, :, :]  # Shape: (batch, height, width)
+            out = feature_map[:, t, :, :] * att_map
+
+            # Incorporate direction if provided
+            if direction_maps is not None:
+                pos_map = direction_maps[:, t, 0, :, :]  # Positive channel
+                neg_map = direction_maps[:, t, 1, :, :]  # Negative channel
+                dir_map = self.pos_weight * pos_map + self.neg_weight * neg_map
+                dir_map = torch.sigmoid(dir_map)  # Normalize direction map
+                out = out * (1 + dir_map)  # Amplify features based on direction
+
+            outputs.append(out)
+
         return torch.stack(outputs, dim=1)
 
-class FusionLayerTypeA(nn.Module):
-    def __init__(self, num_frames, out_dim, motion_channels=2):
-        super().__init__()
-        self.num_frames = num_frames
-        self.out_dim = out_dim
-        self.motion_channels = motion_channels
-        # Дополнительный свёрточный слой для сжатия внимания до 1 канала (опционально)
-        self.motion_proj = nn.Conv2d(motion_channels, 1, kernel_size=1)
-
-    def forward(self, feature_map, attention_map):
-        # attention_map: (B, T, 2, H, W)
-        B, T, C, H, W = attention_map.shape
-        outputs = []
-
-        for t in range(min(self.num_frames, self.out_dim)):
-            # Берём 2D-внимание для кадра t: (B, 2, H, W)
-            att_t = attention_map[:, t]  # (B, 2, H, W)
-            # Проектируем в 1 канал
-            att_t = self.motion_proj(att_t).squeeze(1)  # (B, H, W)
-            # Применяем к признакам
-            fused = feature_map[:, t, :, :] * torch.sigmoid(att_t)  # или просто *
-            outputs.append(fused)
-
-        return torch.stack(outputs, dim=1)  # (B, T, C_feat, H, W)
-
-
-# VballNetV1 Model
+# VballNetV3 Model
 class VballNetV3(nn.Module):
-    """
-    VballNetV1: Motion-enhanced U-Net for volleyball tracking.
-    Supports Grayscale (N input frames, N output heatmaps) and RGB (N×3 input channels, N output heatmaps) modes.
-    """
+    """VballNetV3: Motion-enhanced U-Net for volleyball tracking with direction."""
     def __init__(self, height=288, width=512, in_dim=9, out_dim=9, fusion_layer_type="TypeA"):
         super().__init__()
         assert fusion_layer_type == "TypeA", "Fusion layer must be 'TypeA'"
@@ -190,10 +122,8 @@ class VballNetV3(nn.Module):
 
         # Fusion layer
         self.fusion_layer = FusionLayerTypeA(num_frames=num_frames, out_dim=out_dim)
-
         # Motion prompt
         self.motion_prompt = MotionPrompt(num_frames=num_frames, mode=mode)
-
         # Encoder
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_dim, 32, kernel_size=3, padding=1, bias=True),
@@ -206,20 +136,17 @@ class VballNetV3(nn.Module):
             nn.BatchNorm2d(32)
         )
         self.pool1 = nn.MaxPool2d(2, stride=2)
-
         self.enc2 = nn.Sequential(
             nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(64)
         )
         self.pool2 = nn.MaxPool2d(2, stride=2)
-
         self.enc3 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(128)
         )
-
         # Decoder
         self.up1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.dec1 = nn.Sequential(
@@ -233,42 +160,38 @@ class VballNetV3(nn.Module):
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(32)
         )
-
         # Output layer
         self.out_conv = nn.Conv2d(32, out_dim, kernel_size=1, padding=0)
 
     def forward(self, imgs_input):
         # Reshape input for motion prompt
         channels_per_frame = imgs_input.shape[1] // self.motion_prompt.num_frames
-        motion_input = imgs_input.view(imgs_input.shape[0], self.motion_prompt.num_frames, channels_per_frame, imgs_input.shape[2], imgs_input.shape[3])
+        motion_input = imgs_input.view(imgs_input.shape[0], self.motion_prompt.num_frames, 
+                                     channels_per_frame, imgs_input.shape[2], imgs_input.shape[3])
 
-        # Motion prompt
-        residual_maps, _ = self.motion_prompt(motion_input)
+        # Motion prompt with direction
+        residual_maps, direction_maps, _ = self.motion_prompt(motion_input)
 
         # Encoder
         x1 = self.enc1(imgs_input)
         x1_1 = self.enc1_1(x1)
         x = self.pool1(x1_1)
-
         x2 = self.enc2(x)
         x = self.pool2(x2)
-
         x = self.enc3(x)
 
         # Decoder
         x = self.up1(x)
         x = torch.cat([x, x2], dim=1)
         x = self.dec1(x)
-
         x = self.up2(x)
         x = torch.cat([x, x1_1], dim=1)
         x = self.dec2(x)
 
         # Output
         x = self.out_conv(x)
-        x = self.fusion_layer(x, residual_maps)
+        x = self.fusion_layer(x, residual_maps, direction_maps)
         x = torch.sigmoid(x)
-
         return x
 
 if __name__ == "__main__":
@@ -276,7 +199,7 @@ if __name__ == "__main__":
     height, width, in_dim, out_dim = 288, 512, 9, 9
     model = VballNetV3(height, width, in_dim, out_dim)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"VballNetV1 initialized with {total_params:,} parameters")
+    print(f"VballNetV3 initialized with {total_params:,} parameters")
 
     # Forward pass test
     test_input = torch.randn(2, in_dim, height, width)
@@ -284,4 +207,4 @@ if __name__ == "__main__":
     print(f"Input shape: {test_input.shape}")
     print(f"Output shape: {test_output.shape}")
     print(f"Output range: [{test_output.min():.3f}, {test_output.max():.3f}]")
-    print("✓ VballNetV1 ready for training!")
+    print("✓ VballNetV3 ready for training with direction awareness!")
