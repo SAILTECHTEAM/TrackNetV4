@@ -34,7 +34,7 @@ done
 # Check if data path is provided
 if [ -z "$DATA_PATH" ]; then
   echo "Error: --data path is required"
-  echo "Usage: ./train_all_v3c.sh --data path/to/data [--batch 3] [--epochs 30] [other_args]"
+  echo "Usage: ./train_all_v3c.sh --data path/to/data [--batch 1] [--epochs 30] [other_args]"
   exit 1
 fi
 
