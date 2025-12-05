@@ -101,7 +101,7 @@ class FusionLayerTypeA(nn.Module):
         return features * weights
 
 
-class VballNetV3b(nn.Module):
+class VballNetV3c(nn.Module):
     """Гибкая VBallNet v3 — аккуратная и совместимая версия.
 
     in_dim — число входных кадров; out_dim — число выходных heatmap'ов.
@@ -237,7 +237,7 @@ class VballNetV3b(nn.Module):
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    model = VballNetV3b(height=288, width=512, in_dim=9, out_dim=9).to(device)
+    model = VballNetV3c(height=288, width=512, in_dim=9, out_dim=9).to(device)
     model.train()
 
     x = torch.randn(2, 9, 288, 512, device=device)

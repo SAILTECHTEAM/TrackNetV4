@@ -55,6 +55,7 @@ from model.vballnet_v1a import VballNetV1a as VballNetV1a
 from model.vballnet_v2 import VballNetV2
 from model.vballnet_v3 import VballNetV3
 from model.vballnet_v3b import VballNetV3b
+from model.vballnet_v3c import VballNetV3c
 from model.vballnet_v1c import VballNetV1c
 from model.vballnet_v1d import VballNetV1d as VballNetV1d  # Import the new version
 from model.vballnetfast_v1 import VballNetFastV1  # Import the fast version
@@ -96,7 +97,7 @@ def parse_args():
         type=str,
         default="TrackNet",
         #   choices=["TrackNet",  "VballNetV2", "VballNetV3", "VballNetV1a", "VballNetV1b", "VballNetV1c", "VballNetV1d", "VballNetFastV1","VballNetFastV2"],
-        choices=["TrackNet", "VballNetV2", "VballNetV3b", "VballNetV3", "VballNetV1a", "VballNetV1c", "VballNetV1d", "VballNetFastV1", "VballNetFastV2"],
+        choices=["TrackNet", "VballNetV2", "VballNetV3b", "VballNetV3c", "VballNetV3", "VballNetV1a", "VballNetV1c", "VballNetV1d", "VballNetFastV1", "VballNetFastV2"],
     )
     parser.add_argument('--grayscale', action='store_true')
     parser.add_argument('--seq', type=int, default=3)
@@ -342,6 +343,15 @@ class Trainer:
                 out_dim=out_dim,
             ).to(self.device)
             self.model._model_type = "VballNetV3b"
+
+        elif self.args.model_name == "VballNetV3c":
+            self.model = VballNetV3c(
+                height=288,
+                width=512,
+                in_dim=in_dim,
+                out_dim=out_dim,
+            ).to(self.device)
+            self.model._model_type = "VballNetV3c"
 
 
         elif self.args.model_name == "VballNetV1c":
