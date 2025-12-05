@@ -228,6 +228,12 @@ class VballNetV3b(nn.Module):
 
 # ====================== Тест ======================
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='VballNetV3b ONNX Exporter')
+    parser.add_argument('--model_path', type=str, help='Path to the trained model checkpoint')
+    args = parser.parse_args()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Пример: 9 каналов → 9 heatmaps (совместимо с VballNetV1a)
@@ -238,12 +244,27 @@ if __name__ == "__main__":
         out_dim=9
     ).to(device)
 
+    # If model path is provided, load the trained model
+    if args.model_path:
+        print(f"Loading model from checkpoint: {args.model_path}")
+        checkpoint = torch.load(args.model_path, map_location=device)
+        
+        # Handle different checkpoint formats
+        if 'state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['state_dict'])
+        elif 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        
+        print("Model loaded successfully!")
+    
     model.eval()
-    x = torch.randn(2, 9, 288, 512, device=device)  # (B, C, H, W) - compatible with VballNetV1a
+    x = torch.randn(1, 9, 288, 512, device=device)  # (B, C, H, W) - compatible with VballNetV1a
     y = model(x)
 
     print(f"Input shape : {x.shape}")
-    print(f"Output shape: {y.shape}")  # Expected: [2, 9, 288, 512]
+    print(f"Output shape: {y.shape}")  # Expected: [1, 9, 288, 512]
     print(f"Параметры  : {sum(p.numel() for p in model.parameters()):,}")
     
     # Test compatibility with VballNetV1a format
@@ -254,15 +275,16 @@ if __name__ == "__main__":
 
     # Экспорт в ONNX (для OpenVINO)
     try:
+        onnx_filename = "vball_net_v3b_trained.onnx" if args.model_path else "vball_net_v3b_random.onnx"
         torch.onnx.export(
             model,
             (x,),
-            "vball_net_v3_flexible.onnx",
+            onnx_filename,
             opset_version=17,
             input_names=["clip"],
             output_names=["heatmaps"],
             dynamic_axes={"clip": {0: "B"}, "heatmaps": {0: "B"}}
         )
-        print("\n✓ ONNX сохранён → используй: mo --input_model vball_net_v3_flexible.onnx --data_type FP16")
+        print(f"\n✓ ONNX сохранён как {onnx_filename} → используй: mo --input_model {onnx_filename} --data_type FP16")
     except Exception as e:
         print(f"\nОшибка экспорта ONNX: {e}")

@@ -326,15 +326,7 @@ class Trainer:
             ).to(self.device)
             self.model._model_type = "VballNetV1d"
 
-        elif 'VballNetV3' in self.args.model_name:
-            self.model = VballNetV3(
-                height=288,
-                width=512,
-                in_dim=in_dim,
-                out_dim=out_dim,
-            ).to(self.device)
-            self.model._model_type = "VballNetV3"
-
+        
         elif self.args.model_name == "VballNetV3b":
             self.model = VballNetV3b(
                 height=288,
@@ -352,6 +344,16 @@ class Trainer:
                 out_dim=out_dim,
             ).to(self.device)
             self.model._model_type = "VballNetV3c"
+
+
+        elif 'VballNetV3' in self.args.model_name:
+            self.model = VballNetV3(
+                height=288,
+                width=512,
+                in_dim=in_dim,
+                out_dim=out_dim,
+            ).to(self.device)
+            self.model._model_type = "VballNetV3"
 
 
         elif self.args.model_name == "VballNetV1c":

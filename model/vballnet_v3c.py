@@ -235,9 +235,31 @@ class VballNetV3c(nn.Module):
 
 # ====================== Тест/пример использования ======================
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='VballNetV3c ONNX Exporter')
+    parser.add_argument('--model_path', type=str, help='Path to the trained model checkpoint')
+    args = parser.parse_args()
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     model = VballNetV3c(height=288, width=512, in_dim=9, out_dim=9).to(device)
+    
+    # If model path is provided, load the trained model
+    if args.model_path:
+        print(f"Loading model from checkpoint: {args.model_path}")
+        checkpoint = torch.load(args.model_path, map_location=device)
+        
+        # Handle different checkpoint formats
+        if 'state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['state_dict'])
+        elif 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        
+        print("Model loaded successfully!")
+
     model.train()
 
     x = torch.randn(2, 9, 288, 512, device=device)
@@ -255,17 +277,18 @@ if __name__ == "__main__":
         y = model(x)
     print("Eval OK. Output range:", float(y.min()), float(y.max()))
 
-    # Попытка экспорта в ONNX (опционально)
+    # Экспорт в ONNX (опционально)
     try:
+        onnx_filename = "vball_net_v3c_trained.onnx" if args.model_path else "vball_net_v3c_random.onnx"
         torch.onnx.export(
             model,
             (x,),
-            "vball_net_v3_fixed.onnx",
+            onnx_filename,
             opset_version=17,
             input_names=["clip"],
             output_names=["heatmaps"],
             dynamic_axes={"clip": {0: "B"}, "heatmaps": {0: "B"}},
         )
-        print("ONNX saved: vball_net_v3_fixed.onnx")
+        print(f"ONNX saved: {onnx_filename}")
     except Exception as e:
         print("ONNX export failed:", e)
