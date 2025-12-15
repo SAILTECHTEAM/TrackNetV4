@@ -10,15 +10,14 @@ VAL_DATADIR=datasets/mix_volleyball_test_preprocessed
 uv run  train_gru.py \
   --data "$DATADIR" \
   --val_data "$VAL_DATADIR" \
-  --model_name VballNetV1c \
+  --model_name VballNetV1a \
   --seq 15 \
   --grayscale \
   --optimizer AdamW \
-  --lr 0.0005 \
+  --lr 0.001 \
   --epochs 200 \
-  --batch 24  \
+  --batch 40  \
   --scheduler ReduceLROnPlateau \
-  --workers 12 \
-  --name exp_VballNetV1c_seq15_grayscale
+  --workers 8
 
 echo "Training completed!"

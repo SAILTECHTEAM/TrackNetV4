@@ -321,7 +321,7 @@ class Trainer:
         if self.args.model_name == "TrackNet":
             self.model = TrackNet().to(self.device)
         elif self.args.model_name == "VballNetV1a":
-            self.model = VballNetV1a(**model_params, fusion_layer_type="TypeA").to(self.device)
+            self.model = VballNetV1a(**model_params).to(self.device)
             self.model._model_type = "VballNetV1a"
 
         elif 'VballNetV1d' in self.args.model_name:
