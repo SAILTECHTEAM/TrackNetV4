@@ -27,7 +27,7 @@ class MotionPrompt(nn.Module):
     """
 
     def __init__(
-        self, num_frames, mode="grayscale", penalty_weight=0.0, gru_hidden_size=256
+        self, num_frames, mode="grayscale", penalty_weight=0.0, gru_hidden_size=128
     ):
         super().__init__()
         self.num_frames = num_frames
