@@ -172,7 +172,7 @@ class Trainer:
         suffix = "_resumed" if self.args.resume else ""
         # Формируем составное имя модели для папки и чекпоинтов
         model_tag = f"{self.args.model_name}_seq{self.args.seq}" + ("_grayscale" if self.args.grayscale else "")
-        self.save_dir = Path(self.args.out) / f"{self.args.name}_{model_tag}{suffix}_{timestamp}"
+        self.save_dir = Path(self.args.out) / f"{model_tag}{suffix}_{timestamp}"
         self.save_dir.mkdir(parents=True, exist_ok=True)
         (self.save_dir / "checkpoints").mkdir(exist_ok=True)
         (self.save_dir / "plots").mkdir(exist_ok=True)
@@ -505,12 +505,17 @@ class Trainer:
                             h0 = hn.detach() if hn is not None else None
                         else:  # For models like VballNetFastV2 that don't use h0
                             outputs = self.model(inputs)
+                            # For VballNetFastV2, we don't need to handle h0
                     except Exception as e:
                         print(f"GRU forward pass error: {e}")
                         outputs = self.model(inputs)
                         h0 = None
                 else:
                     outputs = self.model(inputs)
+                
+                # Handle case where model returns tuple (output, hidden_state)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
 
                 loss = self.criterion(outputs, targets)
                 total_loss += loss.item()
@@ -603,12 +608,17 @@ class Trainer:
                             h0 = hn.detach() if hn is not None else None
                         else:  # For models like VballNetFastV2 that don't use h0
                             outputs = self.model(inputs)
+                            # For VballNetFastV2, we don't need to handle h0
                     except Exception as e:
                         print(f"GRU forward pass error: {e}")
                         outputs = self.model(inputs)
                         h0 = None
                 else:
                     outputs = self.model(inputs)
+                
+                # Handle case where model returns tuple (output, hidden_state)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
 
                 loss = self.criterion(outputs, targets)
                 loss.backward()
