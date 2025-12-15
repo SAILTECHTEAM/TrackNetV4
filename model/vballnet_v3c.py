@@ -243,6 +243,7 @@ if __name__ == "__main__":
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    device = 'cpu'
     model = VballNetV3c(height=288, width=512, in_dim=9, out_dim=9).to(device)
     
     # If model path is provided, load the trained model
@@ -251,12 +252,16 @@ if __name__ == "__main__":
         checkpoint = torch.load(args.model_path, map_location=device)
         
         # Handle different checkpoint formats
-        if 'state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['state_dict'])
-        elif 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
-        else:
-            model.load_state_dict(checkpoint)
+        # if 'state_dict' in checkpoint:
+        #     model.load_state_dict(checkpoint['state_dict'])
+        # elif 'model_state_dict' in checkpoint:
+        #     model.load_state_dict(checkpoint['model_state_dict'])
+        # else:
+        #     model.load_state_dict(checkpoint)
+        
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        #model.load_state_dict(checkpoint)
         
         print("Model loaded successfully!")
 
@@ -279,7 +284,12 @@ if __name__ == "__main__":
 
     # Экспорт в ONNX (опционально)
     try:
-        onnx_filename = "vball_net_v3c_trained.onnx" if args.model_path else "vball_net_v3c_random.onnx"
+        if args.model_path:
+            # Сохраняем ONNX рядом с моделью, заменяя расширение на .onnx
+            import os
+            onnx_filename = os.path.splitext(args.model_path)[0] + ".onnx"
+        else:
+            onnx_filename = "vball_net_v3c_random.onnx"
         torch.onnx.export(
             model,
             (x,),
