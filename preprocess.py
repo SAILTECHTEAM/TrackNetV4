@@ -33,6 +33,7 @@ import os
 import shutil
 import sys
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
@@ -126,58 +127,79 @@ def validate_dataset_structure(source_path):
     return True, summary
 
 
-def estimate_total_frames(source_path):
-    frame_total = 0
+def collect_video_tasks(source_path, output_path):
+    tasks = []
+    entries = [item for item in os.listdir(source_path) if is_valid_path(item)]
     match_dirs = [
-        item for item in os.listdir(source_path) if is_valid_path(item)
-        and item.startswith("match") and os.path.isdir(os.path.join(source_path, item))
+        item for item in entries
+        if item.startswith("match") and os.path.isdir(os.path.join(source_path, item))
     ]
     for match_dir in match_dirs:
         match_path = os.path.join(source_path, match_dir)
-        videos_path = os.path.join(match_path, "video")
-        if os.path.exists(videos_path):
-            mp4_files = [f for f in os.listdir(videos_path)
-                         if f.endswith('.mp4') and is_valid_path(f)]
-            for mp4_file in mp4_files:
-                video_path = os.path.join(videos_path, mp4_file)
-                video_capture = cv2.VideoCapture(video_path)
-                if video_capture.isOpened():
-                    total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
-                    frame_total += total_frames
-                video_capture.release()
-    return frame_total
+        videos_dir = os.path.join(match_path, "video")
+        annotations_dir = os.path.join(match_path, "csv")
+        if not os.path.exists(videos_dir) or not os.path.exists(annotations_dir):
+            continue
+        match_output_dir = os.path.join(output_path, match_dir)
+        inputs_output_dir = os.path.join(match_output_dir, "inputs")
+        heatmaps_output_dir = os.path.join(match_output_dir, "heatmaps")
+        mp4_files = [f for f in os.listdir(videos_dir) if f.endswith('.mp4') and is_valid_path(f)]
+        for mp4_file in mp4_files:
+            video_path = os.path.join(videos_dir, mp4_file)
+            sequence_name = Path(mp4_file).stem
+            annotation_path = os.path.join(annotations_dir, f"{sequence_name}_ball.csv")
+            if os.path.exists(annotation_path):
+                tasks.append({
+                    'video_path': video_path,
+                    'annotation_path': annotation_path,
+                    'inputs_output_dir': inputs_output_dir,
+                    'heatmaps_output_dir': heatmaps_output_dir,
+                    'sequence_name': sequence_name,
+                    'match_name': match_dir
+                })
+    return tasks
 
 
-def process_video_sequence(video_path, annotation_path, inputs_output_dir, heatmaps_output_dir,
-                           sequence_name, sigma_value, progress_bar):
+def estimate_video_frames(video_path):
+    video_capture = cv2.VideoCapture(video_path)
+    if video_capture.isOpened():
+        total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_capture.release()
+        return total_frames
+    return 0
+
+
+def process_single_video(task, sigma_value):
+    video_path = task['video_path']
+    annotation_path = task['annotation_path']
+    inputs_output_dir = task['inputs_output_dir']
+    heatmaps_output_dir = task['heatmaps_output_dir']
+    sequence_name = task['sequence_name']
+    
     sequence_inputs_dir = os.path.join(inputs_output_dir, sequence_name)
     sequence_heatmaps_dir = os.path.join(heatmaps_output_dir, sequence_name)
     os.makedirs(sequence_inputs_dir, exist_ok=True)
     os.makedirs(sequence_heatmaps_dir, exist_ok=True)
-    if not os.path.exists(annotation_path):
-        tqdm.write(f"Warning: Annotation file not found {annotation_path}")
-        return 0
+    
     try:
         annotations_df = pd.read_csv(annotation_path)
-    except Exception as e:
-        tqdm.write(f"Error: Cannot read annotation file {annotation_path}: {e}")
+    except Exception:
         return 0
+    
     video_stream = cv2.VideoCapture(video_path)
     if not video_stream.isOpened():
-        tqdm.write(f"Error: Cannot open video {video_path}")
         return 0
+    
     frames_processed = 0
     current_frame = 0
     encoding_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-    annotation_lookup = {}
-    for _, row in annotations_df.iterrows():
-        annotation_lookup[row['Frame']] = row
+    annotation_lookup = {row['Frame']: row for _, row in annotations_df.iterrows()}
+    
     try:
         while True:
             frame_available, frame_data = video_stream.read()
             if not frame_available:
                 break
-            progress_bar.update(1)
             if current_frame in annotation_lookup:
                 annotation_row = annotation_lookup[current_frame]
                 processed_frame, scale_factor, x_offset, y_offset = resize_with_aspect_ratio(frame_data)
@@ -200,47 +222,11 @@ def process_video_sequence(video_path, annotation_path, inputs_output_dir, heatm
                 cv2.imwrite(frame_output_path, processed_frame, encoding_params)
                 cv2.imwrite(heatmap_output_path, heatmap)
                 frames_processed += 1
-                del processed_frame, heatmap
             current_frame += 1
-            if current_frame % 100 == 0:
-                gc.collect()
     finally:
         video_stream.release()
+    
     return frames_processed
-
-
-def process_match_directory(match_path, output_base_dir, sigma_value, progress_bar):
-    match_name = os.path.basename(match_path)
-    match_output_dir = os.path.join(output_base_dir, match_name)
-    inputs_output_dir = os.path.join(match_output_dir, "inputs")
-    heatmaps_output_dir = os.path.join(match_output_dir, "heatmaps")
-    os.makedirs(inputs_output_dir, exist_ok=True)
-    os.makedirs(heatmaps_output_dir, exist_ok=True)
-    videos_dir = os.path.join(match_path, "video")
-    annotations_dir = os.path.join(match_path, "csv")
-    if not os.path.exists(videos_dir) or not os.path.exists(annotations_dir):
-        tqdm.write(f"Warning: Missing video or csv directory in {match_name}")
-        return
-    mp4_files = [f for f in os.listdir(videos_dir)
-                 if f.endswith('.mp4') and is_valid_path(f)]
-    sequences_processed = 0
-    total_frames_processed = 0
-    for mp4_file in mp4_files:
-        video_path = os.path.join(videos_dir, mp4_file)
-        sequence_name = Path(mp4_file).stem
-        annotation_filename = f"{sequence_name}_ball.csv"
-        annotation_path = os.path.join(annotations_dir, annotation_filename)
-        if os.path.exists(annotation_path):
-            frames_count = process_video_sequence(
-                video_path, annotation_path, inputs_output_dir, heatmaps_output_dir,
-                sequence_name, sigma_value, progress_bar
-            )
-            if frames_count > 0:
-                sequences_processed += 1
-                total_frames_processed += frames_count
-        else:
-            tqdm.write(f"Warning: Annotation file not found for {mp4_file}")
-    tqdm.write(f"Completed {match_name}: {sequences_processed} sequences, {total_frames_processed} frames")
 
 
 def preprocess_dataset(cfg):
@@ -248,12 +234,14 @@ def preprocess_dataset(cfg):
     output_path = cfg['output']
     sigma_value = cfg['sigma']
     force_overwrite = cfg['force']
+    num_workers = cfg.get('workers', 4)
     
     structure_valid, validation_message = validate_dataset_structure(source_path)
     if not structure_valid:
         print(f"Error: {validation_message}")
         return False
     print(f"Validated: {validation_message}")
+    
     if os.path.exists(output_path):
         if force_overwrite:
             print(f"Removing existing directory: {output_path}")
@@ -265,35 +253,34 @@ def preprocess_dataset(cfg):
                 return False
             shutil.rmtree(output_path)
     os.makedirs(output_path, exist_ok=True)
-    entries = [item for item in os.listdir(source_path) if is_valid_path(item)]
-    match_dirs = [
-        item for item in entries
-        if item.startswith("match") and os.path.isdir(os.path.join(source_path, item))
-    ]
-    valid_match_dirs = []
-    for match_dir_name in match_dirs:
-        match_dir_path = os.path.join(source_path, match_dir_name)
-        has_csv = os.path.exists(os.path.join(match_dir_path, "csv"))
-        has_video = os.path.exists(os.path.join(match_dir_path, "video"))
-        if has_csv and has_video:
-            valid_match_dirs.append(match_dir_name)
-        else:
-            print(f"Skipping {match_dir_name}: missing csv or video directory")
-    if not valid_match_dirs:
-        print("Error: No valid match directories found")
+    
+    tasks = collect_video_tasks(source_path, output_path)
+    if not tasks:
+        print("Error: No valid video tasks found")
         return False
-    print(f"Processing {len(valid_match_dirs)} match directories...")
-    total_frame_count = estimate_total_frames(source_path)
-    print(f"Total frames to process: {total_frame_count}")
-    with tqdm(total=total_frame_count, desc="Processing frames", unit="frame") as progress_bar:
-        for match_dir_name in valid_match_dirs:
-            match_dir_path = os.path.join(source_path, match_dir_name)
-            process_match_directory(match_dir_path, output_path, sigma_value, progress_bar)
-            gc.collect()
+    
+    print(f"Found {len(tasks)} videos to process with {num_workers} workers")
+    
+    total_frames = sum(estimate_video_frames(t['video_path']) for t in tasks)
+    print(f"Estimated total frames: {total_frames}")
+    
+    processed_frames = 0
+    with tqdm(total=len(tasks), desc="Processing videos", unit="video") as pbar:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(process_single_video, task, sigma_value): task for task in tasks}
+            for future in as_completed(futures):
+                task = futures[future]
+                try:
+                    frames = future.result()
+                    processed_frames += frames
+                except Exception as e:
+                    tqdm.write(f"Error processing {task['sequence_name']}: {e}")
+                pbar.update(1)
+    
     print(f"Preprocessing completed!")
     print(f"Source: {source_path}")
     print(f"Output: {output_path}")
-    print(f"Heatmap sigma: {sigma_value}")
+    print(f"Total frames processed: {processed_frames}")
     return True
 
 
