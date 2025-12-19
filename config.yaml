@@ -45,3 +45,4 @@ predict:
   output: output.mp4 # 输出视频路径
   threshold: 0.5 # 检测阈值
   dot_size: 5 # 标记点大小 (像素)
+  batch_size: 8 # 批量推理大小 (越大越快但需要更多显存)

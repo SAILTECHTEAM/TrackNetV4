@@ -28,7 +28,7 @@ pip install -r requirements.txt
 
 ## Configuration
 
-All parameters are configured in `config.yaml`. Edit this file to customize preprocessing, training, and testing settings.
+All parameters are configured in `config.yaml`. Edit this file to customize preprocessing, training, testing, and prediction settings.
 
 ## Usage
 
@@ -47,15 +47,14 @@ python train.py --config config.yaml
 python test.py --config config.yaml
 ```
 
+### Prediction
+```bash
+python predict.py --config config.yaml
+```
+
 ### TensorBoard
 ```bash
 tensorboard --logdir outputs/
-```
-
-### Inference
-```bash
-PYTHONPATH=. python predict/video_predict.py
-PYTHONPATH=. python predict/single_frame_predict.py
 ```
 
 ## Model Architecture
@@ -86,20 +85,19 @@ dataset/
 ```
 tracknet-v4-pytorch/
 ├── model/
-│   ├── tracknet_v4.py          # Main TrackNet V4 architecture
-│   ├── tracknet_v2.py          # Legacy TrackNet V2
-│   └── loss.py                 # Weighted Binary Cross Entropy loss
+│   ├── tracknet_v4.py      # TrackNet V4 with motion attention
+│   ├── tracknet_v2.py      # TrackNet V2 baseline
+│   ├── tracknet_exp.py     # Experimental model with CBAM
+│   └── loss.py             # Weighted Binary Cross Entropy loss
 ├── preprocessing/
-│   ├── tracknet_dataset.py     # PyTorch dataset loader
-│   └── data_visualizer.py      # Data visualization tools
-├── predict/
-│   ├── single_frame_predict.py # Single frame inference
-│   └── video_predict.py        # Video batch processing
-├── config.yaml                 # Configuration file
-├── preprocess.py               # Dataset preprocessing
-├── train.py                    # Training script
-├── test.py                     # Model evaluation
-└── requirements.txt            # Dependencies
+│   ├── tracknet_dataset.py # PyTorch dataset loader
+│   └── data_visualizer.py  # Data visualization tools
+├── config.yaml             # Configuration file
+├── preprocess.py           # Dataset preprocessing
+├── train.py                # Training script
+├── test.py                 # Model evaluation
+├── predict.py              # Video inference
+└── requirements.txt        # Dependencies
 ```
 
 ## Citation

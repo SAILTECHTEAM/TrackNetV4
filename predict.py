@@ -1,7 +1,7 @@
-"""Video Prediction with Sliding Window
+"""Video Prediction with Batch Sliding Window
 
 Usage:
-    python predict/video_predict.py --config config.yaml
+    python predict.py --config config.yaml
 """
 
 import os
@@ -15,10 +15,9 @@ import torch
 import yaml
 from tqdm import tqdm
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.tracknet_v2 import TrackNet
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
 def load_config(config_path):
@@ -29,36 +28,41 @@ def load_config(config_path):
         'input': 'input.mp4',
         'output': 'output.mp4',
         'threshold': 0.5,
-        'dot_size': 5
+        'dot_size': 5,
+        'batch_size': 8
     })
 
 
-class SlidingWindowPredictor:
-    def __init__(self, model_path, threshold=0.5, dot_size=5):
+class BatchSlidingWindowPredictor:
+    def __init__(self, model_path, threshold=0.5, dot_size=5, batch_size=8):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TrackNet().to(self.device)
         self.threshold = threshold
         self.dot_size = dot_size
+        self.batch_size = batch_size
 
         checkpoint = torch.load(model_path, map_location=self.device)
         state_dict = checkpoint.get('model_state_dict', checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
 
-    def preprocess_frames(self, frames):
-        processed = []
-        for frame in frames:
-            resized = cv2.resize(frame, (512, 288))
-            tensor = torch.from_numpy(resized.astype(np.float32) / 255.0).permute(2, 0, 1)
-            processed.append(tensor)
-        return torch.cat(processed, dim=0).unsqueeze(0).to(self.device)
+    def preprocess_frame(self, frame):
+        resized = cv2.resize(frame, (512, 288))
+        tensor = torch.from_numpy(resized.astype(np.float32) / 255.0).permute(2, 0, 1)
+        return tensor
 
-    def predict_center_frame(self, frames):
-        input_tensor = self.preprocess_frames(frames)
+    def preprocess_batch(self, windows):
+        batch = []
+        for window in windows:
+            frames_tensor = torch.cat([self.preprocess_frame(f) for f in window], dim=0)
+            batch.append(frames_tensor)
+        return torch.stack(batch).to(self.device)
+
+    def predict_batch(self, windows):
+        input_tensor = self.preprocess_batch(windows)
         with torch.no_grad():
             output = self.model(input_tensor)
-        heatmap = output[0, 1].cpu().numpy()
-        return heatmap
+        return output[:, 1].cpu().numpy()
 
     def detect_ball(self, heatmap, original_size):
         if heatmap.max() < self.threshold:
@@ -83,49 +87,55 @@ class SlidingWindowPredictor:
 
         print(f"Video: {total_frames} frames, {width}x{height}, {fps:.1f}FPS")
         print(f"Device: {self.device}")
+        print(f"Batch size: {self.batch_size}")
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-        frame_buffer = []
+        all_frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            all_frames.append(frame)
+        cap.release()
+
+        if len(all_frames) < 3:
+            print("Error: Video too short")
+            return
+
         processed_count = 0
         detected_count = 0
 
-        ret, frame1 = cap.read()
-        ret, frame2 = cap.read()
-        if not ret:
-            print("Error: Cannot read video frames")
-            return
+        windows = []
+        center_frames = []
+        for i in range(len(all_frames) - 2):
+            windows.append([all_frames[i], all_frames[i + 1], all_frames[i + 2]])
+            center_frames.append(all_frames[i + 1])
 
-        frame_buffer = [frame1, frame2]
+        with tqdm(total=len(windows), desc="Processing", unit="frame") as pbar:
+            for batch_start in range(0, len(windows), self.batch_size):
+                batch_end = min(batch_start + self.batch_size, len(windows))
+                batch_windows = windows[batch_start:batch_end]
+                batch_center_frames = center_frames[batch_start:batch_end]
 
-        with tqdm(total=total_frames - 2, desc="Processing", unit="frame") as pbar:
-            while True:
-                ret, frame3 = cap.read()
-                if not ret:
-                    break
+                heatmaps = self.predict_batch(batch_windows)
 
-                frame_buffer.append(frame3)
+                for heatmap, center_frame in zip(heatmaps, batch_center_frames):
+                    ball_pos = self.detect_ball(heatmap, (width, height))
+                    processed_frame = self.draw_ball(center_frame.copy(), ball_pos)
+                    out.write(processed_frame)
 
-                heatmap = self.predict_center_frame(frame_buffer)
-                ball_pos = self.detect_ball(heatmap, (width, height))
+                    if ball_pos is not None:
+                        detected_count += 1
+                    processed_count += 1
 
-                center_frame = frame_buffer[1].copy()
-                processed_frame = self.draw_ball(center_frame, ball_pos)
-                out.write(processed_frame)
+                pbar.update(len(batch_windows))
 
-                if ball_pos is not None:
-                    detected_count += 1
-                processed_count += 1
-
-                frame_buffer.pop(0)
-                pbar.update(1)
-
-        out.write(self.draw_ball(frame_buffer[0].copy(), None))
-        out.write(self.draw_ball(frame_buffer[1].copy(), None))
+        out.write(self.draw_ball(all_frames[0].copy(), None))
+        out.write(self.draw_ball(all_frames[-1].copy(), None))
         processed_count += 2
 
-        cap.release()
         out.release()
 
         detection_rate = (detected_count / processed_count) * 100 if processed_count > 0 else 0
@@ -141,6 +151,7 @@ if __name__ == "__main__":
     parser.add_argument('--output', type=str)
     parser.add_argument('--threshold', type=float)
     parser.add_argument('--dot_size', type=int)
+    parser.add_argument('--batch_size', type=int)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -149,15 +160,17 @@ if __name__ == "__main__":
     output_video = args.output or cfg.get('output', 'output.mp4')
     threshold = args.threshold or cfg.get('threshold', 0.5)
     dot_size = args.dot_size or cfg.get('dot_size', 5)
+    batch_size = args.batch_size or cfg.get('batch_size', 8)
 
     print("=" * 60)
-    print("Shuttlecock Detection - Sliding Window")
+    print("Shuttlecock Detection - Batch Sliding Window")
     print("=" * 60)
     print(f"Model: {model_path}")
     print(f"Input: {input_video}")
     print(f"Output: {output_video}")
     print(f"Threshold: {threshold}")
     print(f"Dot size: {dot_size}")
+    print(f"Batch size: {batch_size}")
     print("-" * 60)
 
     if not os.path.exists(input_video):
@@ -168,7 +181,7 @@ if __name__ == "__main__":
         print(f"Error: Model not found: {model_path}")
         sys.exit(1)
 
-    predictor = SlidingWindowPredictor(model_path, threshold, dot_size)
+    predictor = BatchSlidingWindowPredictor(model_path, threshold, dot_size, batch_size)
     predictor.process_video(input_video, output_video)
 
     print("=" * 60)
