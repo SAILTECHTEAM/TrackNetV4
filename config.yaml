@@ -9,7 +9,7 @@ preprocess:
 # 训练配置
 train:
   data: dataset/train # 训练数据集路径
-  resume: null # 恢复训练的检查点路径 (null表示从头开始)
+  resume: null # 恢复训练的实验目录路径 (如: outputs/exp_20241219_140000)
   split: 0.8 # 训练集/验证集分割比例
   seed: 26 # 随机种子
   batch: 3 # 批次大小

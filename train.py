@@ -36,8 +36,8 @@ class Trainer:
         self.best_loss = float('inf')
         self.device = self._get_device()
         self.step = 0
+        self.checkpoint = None
         self._setup_dirs()
-        self._load_checkpoint()
         signal.signal(signal.SIGINT, self._interrupt)
         signal.signal(signal.SIGTERM, self._interrupt)
 
@@ -51,21 +51,30 @@ class Trainer:
         return torch.device(self.cfg['device'])
 
     def _setup_dirs(self):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix = "_resumed" if self.cfg['resume'] else ""
-        self.save_dir = Path(self.cfg['out']) / f"{self.cfg['name']}{suffix}_{timestamp}"
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-        (self.save_dir / "checkpoints").mkdir(exist_ok=True)
-        self.writer = SummaryWriter(log_dir=str(self.save_dir / "tensorboard"))
-
-    def _load_checkpoint(self):
-        if not self.cfg['resume']:
-            return
-        path = Path(self.cfg['resume'])
-        if not path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {path}")
-        self.checkpoint = torch.load(path, map_location='cpu')
-        self.start_epoch = self.checkpoint['epoch'] + (0 if self.checkpoint.get('is_emergency', False) else 1)
+        resume_dir = self.cfg.get('resume')
+        if resume_dir:
+            self.save_dir = Path(resume_dir)
+            if not self.save_dir.exists():
+                raise FileNotFoundError(f"Resume directory not found: {self.save_dir}")
+            checkpoint_dir = self.save_dir / "checkpoints"
+            checkpoint_files = sorted(checkpoint_dir.glob("checkpoint_*.pth"))
+            if not checkpoint_files:
+                checkpoint_files = sorted(checkpoint_dir.glob("emergency_*.pth"))
+            if not checkpoint_files:
+                raise FileNotFoundError(f"No checkpoint found in: {checkpoint_dir}")
+            latest_checkpoint = checkpoint_files[-1]
+            self.checkpoint = torch.load(latest_checkpoint, map_location='cpu')
+            self.start_epoch = self.checkpoint['epoch'] + (0 if self.checkpoint.get('is_emergency', False) else 1)
+            self.step = self.checkpoint.get('step', 0)
+            self.best_loss = self.checkpoint.get('best_loss', self.checkpoint.get('val_loss', float('inf')))
+            self.writer = SummaryWriter(log_dir=str(self.save_dir / "tensorboard"))
+            print(f"Resuming from epoch {self.start_epoch}, step {self.step}")
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.save_dir = Path(self.cfg['out']) / f"{self.cfg['name']}_{timestamp}"
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+            (self.save_dir / "checkpoints").mkdir(exist_ok=True)
+            self.writer = SummaryWriter(log_dir=str(self.save_dir / "tensorboard"))
 
     def _interrupt(self, signum, frame):
         self.interrupted = True
@@ -112,8 +121,9 @@ class Trainer:
                                        num_workers=self.cfg['workers'], pin_memory=self.device.type == 'cuda')
         self.val_loader = DataLoader(val_ds, batch_size=self.cfg['batch'], shuffle=False,
                                      num_workers=self.cfg['workers'], pin_memory=self.device.type == 'cuda')
-        self.writer.add_text('dataset/train_size', str(len(train_ds)))
-        self.writer.add_text('dataset/val_size', str(len(val_ds)))
+        if not self.checkpoint:
+            self.writer.add_text('dataset/train_size', str(len(train_ds)))
+            self.writer.add_text('dataset/val_size', str(len(val_ds)))
 
     def _create_optimizer(self):
         lr = self._get_lr()
@@ -135,16 +145,23 @@ class Trainer:
                                                patience=self.cfg['patience'], min_lr=self.cfg['min_lr'])
         else:
             self.scheduler = None
-        if hasattr(self, 'checkpoint'):
+        if self.checkpoint:
             self.model.load_state_dict(self.checkpoint['model_state_dict'])
+            if 'optimizer_state_dict' in self.checkpoint:
+                self.optimizer.load_state_dict(self.checkpoint['optimizer_state_dict'])
+            if self.scheduler and 'scheduler_state_dict' in self.checkpoint:
+                self.scheduler.load_state_dict(self.checkpoint['scheduler_state_dict'])
 
     def save_checkpoint(self, epoch, train_loss, val_loss, is_emergency=False):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'train_loss': train_loss,
             'val_loss': val_loss,
+            'best_loss': self.best_loss,
             'learning_rate': self.optimizer.param_groups[0]['lr'],
             'is_emergency': is_emergency,
             'step': self.step,
@@ -156,6 +173,7 @@ class Trainer:
         torch.save(checkpoint, filepath)
         if not is_emergency and val_loss < self.best_loss:
             self.best_loss = val_loss
+            checkpoint['best_loss'] = self.best_loss
             torch.save(checkpoint, self.save_dir / "checkpoints" / "best_model.pth")
             return filepath, True
         return filepath, False
