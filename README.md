@@ -18,6 +18,27 @@ TrackNet V4 enhances sports object tracking by incorporating motion attention ma
 - PyTorch ≥ 1.9.0
 - CUDA (recommended for training)
 
+## Pretrained Model
+
+A pretrained model checkpoint is available for download:
+
+[Download Model (Google Drive)](https://drive.google.com/file/d/10bCCck9s_WDJkJq9DaFhddsawc-HNypn/view?usp=sharing)
+
+This model was trained on the dataset and achieves strong performance metrics on the test set (see Performance section below).
+
+The pretrained model achieves the following metrics on the test dataset:
+
+| Metric | Score |
+|--------|-------|
+| Accuracy | 94.4% |
+| Precision | 95.8% |
+| Recall | 97.2% |
+| F1-Score | 96.5% |
+
+*Evaluation performed on center frame predictions with threshold 0.5 and tolerance 4px*
+
+
+
 ## Installation
 
 ```bash
