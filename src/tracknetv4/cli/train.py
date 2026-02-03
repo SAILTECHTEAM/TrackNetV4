@@ -42,40 +42,48 @@ import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
-from model.loss import WeightedBinaryCrossEntropy
-from preprocessing.tracknet_dataset import FrameHeatmapDataset
+from tracknetv4.model.loss import WeightedBinaryCrossEntropy
+from tracknetv4.preprocessing.tracknet_dataset import FrameHeatmapDataset
 
 # Choose the version of TrackNet model you want to use
-from model.tracknet_v4 import TrackNet
+from tracknetv4.model.tracknet_v4 import TrackNet
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="TrackNet Training")
-    parser.add_argument('--data', type=str, required=True)
-    parser.add_argument('--resume', type=str)
-    parser.add_argument('--split', type=float, default=0.8)
-    parser.add_argument('--seed', type=int, default=26)
-    parser.add_argument('--batch', type=int, default=3)
-    parser.add_argument('--epochs', type=int, default=30)
-    parser.add_argument('--workers', type=int, default=0)
-    parser.add_argument('--device', type=str, default='auto')
-    parser.add_argument('--optimizer', type=str, default='Adadelta',
-                        choices=['Adadelta', 'Adam', 'AdamW', 'SGD'])
-    parser.add_argument('--lr', type=float)
-    parser.add_argument('--wd', type=float, default=0)
-    parser.add_argument('--scheduler', type=str, default='ReduceLROnPlateau',
-                        choices=['ReduceLROnPlateau', 'None'])
-    parser.add_argument('--factor', type=float, default=0.5)
-    parser.add_argument('--patience', type=int, default=3)
-    parser.add_argument('--min_lr', type=float, default=1e-6)
-    parser.add_argument('--plot', type=int, default=1)
-    parser.add_argument('--out', type=str, default='outputs')
-    parser.add_argument('--name', type=str, default='exp')
+    parser.add_argument("--data", type=str, required=True)
+    parser.add_argument("--resume", type=str)
+    parser.add_argument("--split", type=float, default=0.8)
+    parser.add_argument("--seed", type=int, default=26)
+    parser.add_argument("--batch", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="Adadelta",
+        choices=["Adadelta", "Adam", "AdamW", "SGD"],
+    )
+    parser.add_argument("--lr", type=float)
+    parser.add_argument("--wd", type=float, default=0)
+    parser.add_argument(
+        "--scheduler",
+        type=str,
+        default="ReduceLROnPlateau",
+        choices=["ReduceLROnPlateau", "None"],
+    )
+    parser.add_argument("--factor", type=float, default=0.5)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--min_lr", type=float, default=1e-6)
+    parser.add_argument("--plot", type=int, default=1)
+    parser.add_argument("--out", type=str, default="outputs")
+    parser.add_argument("--name", type=str, default="exp")
 
     args = parser.parse_args()
 
     if args.lr is None:
-        lr_defaults = {'Adadelta': 1.0, 'Adam': 0.001, 'AdamW': 0.001, 'SGD': 0.01}
+        lr_defaults = {"Adadelta": 1.0, "Adam": 0.001, "AdamW": 0.001, "SGD": 0.01}
         args.lr = lr_defaults[args.optimizer]
 
     return args
@@ -86,23 +94,23 @@ class Trainer:
         self.args = args
         self.start_epoch = 0
         self.interrupted = False
-        self.best_loss = float('inf')
+        self.best_loss = float("inf")
         self.device = self._get_device()
         self._setup_dirs()
         self._load_checkpoint()
-        self.losses = {'batch': [], 'steps': [], 'lrs': [], 'train': [], 'val': []}
+        self.losses = {"batch": [], "steps": [], "lrs": [], "train": [], "val": []}
         self.step = 0
         signal.signal(signal.SIGINT, self._interrupt)
         signal.signal(signal.SIGTERM, self._interrupt)
 
     def _get_device(self):
-        if self.args.device == 'auto':
+        if self.args.device == "auto":
             if torch.backends.mps.is_available():
-                return torch.device('mps')
+                return torch.device("mps")
             elif torch.cuda.is_available():
-                return torch.device('cuda')
+                return torch.device("cuda")
             else:
-                return torch.device('cpu')
+                return torch.device("cpu")
         return torch.device(self.args.device)
 
     def _setup_dirs(self):
@@ -113,41 +121,47 @@ class Trainer:
         self.save_dir.mkdir(parents=True, exist_ok=True)
         (self.save_dir / "checkpoints").mkdir(exist_ok=True)
         (self.save_dir / "plots").mkdir(exist_ok=True)
-        with open(self.save_dir / "config.json", 'w') as f:
+        with open(self.save_dir / "config.json", "w") as f:
             json.dump(vars(self.args), f, indent=2)
         print(f"Output directory created: {self.save_dir}")
 
     def _load_checkpoint(self):
-        if not self.args.resume: return
+        if not self.args.resume:
+            return
         print("Loading checkpoint...")
         path = Path(self.args.resume)
-        if not path.exists(): raise FileNotFoundError(f"Checkpoint not found: {path}")
-        self.checkpoint = torch.load(path, map_location='cpu')
-        self.start_epoch = self.checkpoint['epoch'] + (0 if self.checkpoint.get('is_emergency', False) else 1)
-        print(f"Checkpoint loaded, resuming from epoch \033[93m{self.start_epoch + 1}\033[0m")
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        self.checkpoint = torch.load(path, map_location="cpu")
+        self.start_epoch = self.checkpoint["epoch"] + (
+            0 if self.checkpoint.get("is_emergency", False) else 1
+        )
+        print(
+            f"Checkpoint loaded, resuming from epoch \033[93m{self.start_epoch + 1}\033[0m"
+        )
 
     def _interrupt(self, signum, frame):
         print("\n\033[91mInterrupt detected\033[0m, saving emergency checkpoint...")
         self.interrupted = True
 
     def _calculate_effective_lr(self):
-        if self.args.optimizer == 'Adadelta':
-            if not hasattr(self.optimizer, 'state') or not self.optimizer.state:
+        if self.args.optimizer == "Adadelta":
+            if not hasattr(self.optimizer, "state") or not self.optimizer.state:
                 return self.args.lr
 
             effective_lrs = []
-            eps = self.optimizer.param_groups[0].get('eps', 1e-6)
+            eps = self.optimizer.param_groups[0].get("eps", 1e-6)
 
             for group in self.optimizer.param_groups:
-                for p in group['params']:
+                for p in group["params"]:
                     if p.grad is None:
                         continue
                     state = self.optimizer.state[p]
                     if len(state) == 0:
                         continue
 
-                    square_avg = state.get('square_avg')
-                    acc_delta = state.get('acc_delta')
+                    square_avg = state.get("square_avg")
+                    acc_delta = state.get("acc_delta")
 
                     if square_avg is not None and acc_delta is not None:
                         if torch.is_tensor(square_avg) and torch.is_tensor(acc_delta):
@@ -163,7 +177,7 @@ class Trainer:
             else:
                 return self.args.lr
         else:
-            return self.optimizer.param_groups[0]['lr']
+            return self.optimizer.param_groups[0]["lr"]
 
     def setup_data(self):
         print("Loading dataset...")
@@ -173,23 +187,46 @@ class Trainer:
         print("Splitting dataset...")
         torch.manual_seed(self.args.seed)
         train_size = int(self.args.split * len(dataset))
-        train_ds, val_ds = random_split(dataset, [train_size, len(dataset) - train_size])
+        train_ds, val_ds = random_split(
+            dataset, [train_size, len(dataset) - train_size]
+        )
 
         print("Creating data loaders...")
-        self.train_loader = DataLoader(train_ds, batch_size=self.args.batch, shuffle=True,
-                                       num_workers=self.args.workers, pin_memory=self.device.type == 'cuda')
-        self.val_loader = DataLoader(val_ds, batch_size=self.args.batch, shuffle=False,
-                                     num_workers=self.args.workers, pin_memory=self.device.type == 'cuda')
-        print(f"Data loaders ready - Train: \033[94m{len(train_ds)}\033[0m | Val: \033[94m{len(val_ds)}\033[0m")
+        self.train_loader = DataLoader(
+            train_ds,
+            batch_size=self.args.batch,
+            shuffle=True,
+            num_workers=self.args.workers,
+            pin_memory=self.device.type == "cuda",
+        )
+        self.val_loader = DataLoader(
+            val_ds,
+            batch_size=self.args.batch,
+            shuffle=False,
+            num_workers=self.args.workers,
+            pin_memory=self.device.type == "cuda",
+        )
+        print(
+            f"Data loaders ready - Train: \033[94m{len(train_ds)}\033[0m | Val: \033[94m{len(val_ds)}\033[0m"
+        )
 
     def _create_optimizer(self):
         optimizers = {
-            'Adadelta': lambda: torch.optim.Adadelta(self.model.parameters(), lr=self.args.lr,
-                                                     weight_decay=self.args.wd),
-            'Adam': lambda: torch.optim.Adam(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd),
-            'AdamW': lambda: torch.optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd),
-            'SGD': lambda: torch.optim.SGD(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd,
-                                           momentum=0.9)
+            "Adadelta": lambda: torch.optim.Adadelta(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd
+            ),
+            "Adam": lambda: torch.optim.Adam(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd
+            ),
+            "AdamW": lambda: torch.optim.AdamW(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd
+            ),
+            "SGD": lambda: torch.optim.SGD(
+                self.model.parameters(),
+                lr=self.args.lr,
+                weight_decay=self.args.wd,
+                momentum=0.9,
+            ),
         }
         return optimizers[self.args.optimizer]()
 
@@ -200,32 +237,38 @@ class Trainer:
         self.optimizer = self._create_optimizer()
 
         if self.args.scheduler == "ReduceLROnPlateau":
-            self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=self.args.factor,
-                                               patience=self.args.patience, min_lr=self.args.min_lr)
+            self.scheduler = ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=self.args.factor,
+                patience=self.args.patience,
+                min_lr=self.args.min_lr,
+            )
         else:
             self.scheduler = None
 
-        if hasattr(self, 'checkpoint'):
+        if hasattr(self, "checkpoint"):
             print("Loading model state from checkpoint...")
-            self.model.load_state_dict(self.checkpoint['model_state_dict'])
+            self.model.load_state_dict(self.checkpoint["model_state_dict"])
             print("Model state loaded successfully")
 
         print(
-            f"Model ready - Optimizer: \033[93m{self.args.optimizer}\033[0m | LR: \033[93m{self.args.lr}\033[0m | WD: \033[93m{self.args.wd}\033[0m")
+            f"Model ready - Optimizer: \033[93m{self.args.optimizer}\033[0m | LR: \033[93m{self.args.lr}\033[0m | WD: \033[93m{self.args.wd}\033[0m"
+        )
 
     def save_checkpoint(self, epoch, train_loss, val_loss, is_emergency=False):
         print("Saving checkpoint...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss,
-            'learning_rate': self.optimizer.param_groups[0]['lr'],
-            'is_emergency': is_emergency,
-            'history': self.losses.copy(),
-            'step': self.step,
-            'timestamp': timestamp
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "learning_rate": self.optimizer.param_groups[0]["lr"],
+            "is_emergency": is_emergency,
+            "history": self.losses.copy(),
+            "step": self.step,
+            "timestamp": timestamp,
         }
 
         prefix = "emergency_" if is_emergency else "checkpoint_"
@@ -246,29 +289,39 @@ class Trainer:
         print("Generating training plots...")
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-        if self.losses['batch']:
-            ax1.plot(self.losses['steps'], self.losses['batch'], 'b-', alpha=0.3, label='Batch Loss')
-        if self.losses['train']:
-            epochs = list(range(1, len(self.losses['train']) + 1))
-            ax1.plot(epochs, self.losses['train'], 'bo-', label='Train')
-            ax1.plot(epochs, self.losses['val'], 'ro-', label='Val')
+        if self.losses["batch"]:
+            ax1.plot(
+                self.losses["steps"],
+                self.losses["batch"],
+                "b-",
+                alpha=0.3,
+                label="Batch Loss",
+            )
+        if self.losses["train"]:
+            epochs = list(range(1, len(self.losses["train"]) + 1))
+            ax1.plot(epochs, self.losses["train"], "bo-", label="Train")
+            ax1.plot(epochs, self.losses["val"], "ro-", label="Val")
 
-        ax1.set_xlabel('Batch/Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.set_title('Training Progress')
+        ax1.set_xlabel("Batch/Epoch")
+        ax1.set_ylabel("Loss")
+        ax1.set_title("Training Progress")
         ax1.legend()
         ax1.grid(True, alpha=0.3)
 
-        if self.losses['lrs']:
-            ax2.plot(self.losses['steps'], self.losses['lrs'], 'g-')
-            ax2.set_xlabel('Batch')
-            ax2.set_ylabel('Learning Rate')
-            ax2.set_title('Learning Rate')
-            ax2.set_yscale('log')
+        if self.losses["lrs"]:
+            ax2.plot(self.losses["steps"], self.losses["lrs"], "g-")
+            ax2.set_xlabel("Batch")
+            ax2.set_ylabel("Learning Rate")
+            ax2.set_title("Learning Rate")
+            ax2.set_yscale("log")
             ax2.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / "plots" / f"epoch_{epoch + 1}.png", dpi=150, bbox_inches='tight')
+        plt.savefig(
+            self.save_dir / "plots" / f"epoch_{epoch + 1}.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
         plt.close()
         print(f"Training plots saved for epoch \033[93m{epoch + 1}\033[0m")
 
@@ -288,7 +341,7 @@ class Trainer:
                 total_loss += loss.item()
 
                 val_pbar.update(1)
-                val_pbar.set_postfix({'loss': f'{loss.item():.6f}'})
+                val_pbar.set_postfix({"loss": f"{loss.item():.6f}"})
             val_pbar.close()
 
         avg_loss = total_loss / len(self.val_loader)
@@ -301,9 +354,12 @@ class Trainer:
         self.setup_model()
 
         for epoch in range(self.start_epoch, self.args.epochs):
-            if self.interrupted: break
+            if self.interrupted:
+                break
 
-            print(f"\nEpoch \033[95m{epoch + 1}\033[0m/\033[95m{self.args.epochs}\033[0m")
+            print(
+                f"\nEpoch \033[95m{epoch + 1}\033[0m/\033[95m{self.args.epochs}\033[0m"
+            )
             start_time = time.time()
             self.model.train()
             total_loss = 0.0
@@ -314,7 +370,9 @@ class Trainer:
                     train_pbar.close()
                     print("Emergency save triggered...")
                     val_loss = self.validate()
-                    self.save_checkpoint(epoch, total_loss / (batch_idx + 1), val_loss, True)
+                    self.save_checkpoint(
+                        epoch, total_loss / (batch_idx + 1), val_loss, True
+                    )
                     self.plot_curves(epoch)
                     return
 
@@ -332,26 +390,29 @@ class Trainer:
                 current_lr = self._calculate_effective_lr()
 
                 if self.step % self.args.plot == 0:
-                    self.losses['batch'].append(batch_loss)
-                    self.losses['steps'].append(self.step)
-                    self.losses['lrs'].append(current_lr)
+                    self.losses["batch"].append(batch_loss)
+                    self.losses["steps"].append(self.step)
+                    self.losses["lrs"].append(current_lr)
 
                 train_pbar.update(1)
-                train_pbar.set_postfix({'loss': f'{batch_loss:.6f}', 'lr': f'{current_lr:.2e}'})
+                train_pbar.set_postfix(
+                    {"loss": f"{batch_loss:.6f}", "lr": f"{current_lr:.2e}"}
+                )
             train_pbar.close()
 
             train_loss = total_loss / len(self.train_loader)
             val_loss = self.validate()
 
-            self.losses['train'].append(train_loss)
-            self.losses['val'].append(val_loss)
+            self.losses["train"].append(train_loss)
+            self.losses["val"].append(val_loss)
 
-            current_lr = self.optimizer.param_groups[0]['lr']
+            current_lr = self.optimizer.param_groups[0]["lr"]
             elapsed = time.time() - start_time
 
             print(
                 f"Epoch [\033[95m{epoch + 1}\033[0m/\033[95m{self.args.epochs}\033[0m] Train: \033[94m{train_loss:.6f}\033[0m Val: \033[94m{val_loss:.6f}\033[0m "
-                f"LR: \033[94m{current_lr:.6e}\033[0m Time: \033[94m{elapsed:.1f}s\033[0m")
+                f"LR: \033[94m{current_lr:.6e}\033[0m Time: \033[94m{elapsed:.1f}s\033[0m"
+            )
 
             if self.scheduler:
                 print("Updating learning rate scheduler...")
@@ -368,7 +429,11 @@ class Trainer:
             print(f"\033[92mAll results saved to: {self.save_dir}\033[0m")
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
     trainer = Trainer(args)
     trainer.train()
+
+
+if __name__ == "__main__":
+    main()

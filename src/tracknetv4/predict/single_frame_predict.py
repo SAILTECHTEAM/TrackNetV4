@@ -5,7 +5,7 @@ import numpy as np
 import cv2
 import torch
 import matplotlib.pyplot as plt
-from model.tracknet_v4 import TrackNet
+from tracknetv4.model.tracknet_v4 import TrackNet
 
 
 class TrackNetPredictor:
@@ -15,7 +15,7 @@ class TrackNetPredictor:
 
         if model_path:
             checkpoint = torch.load(model_path, map_location=self.device)
-            state_dict = checkpoint.get('model_state_dict', checkpoint)
+            state_dict = checkpoint.get("model_state_dict", checkpoint)
             self.model.load_state_dict(state_dict)
 
         self.model.eval()
@@ -58,17 +58,18 @@ class TrackNetPredictor:
     def save_heatmaps(self, heatmaps, output_dir="outputs"):
         """保存热力图"""
         import os
+
         os.makedirs(output_dir, exist_ok=True)
 
         for i, heatmap in enumerate(heatmaps):
             plt.figure(figsize=(8, 6))
-            plt.imshow(heatmap, cmap='hot', interpolation='nearest')
+            plt.imshow(heatmap, cmap="hot", interpolation="nearest")
             plt.colorbar()
-            plt.title(f'Heatmap {i + 1}')
-            plt.axis('off')
+            plt.title(f"Heatmap {i + 1}")
+            plt.axis("off")
 
             save_path = f"{output_dir}/heatmap_{i + 1}.png"
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.savefig(save_path, dpi=150, bbox_inches="tight")
             plt.close()
             print(f"保存热力图: {save_path}")
 

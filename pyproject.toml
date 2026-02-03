@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "tracknetv4-pytorch"
 version = "0.1.0"
-description = "Add your description here"
+description = "TrackNet V4 - Deep learning badminton shuttlecock tracking"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,3 +21,16 @@ dependencies = [
     "torchvision>=0.22.1",
     "tqdm>=4.67.1",
 ]
+
+[project.scripts]
+tracknet-train = "tracknetv4.cli.train:main"
+tracknet-test = "tracknetv4.cli.test:main"
+tracknet-video-predict = "tracknetv4.predict.video_predict:main"
+tracknet-single-predict = "tracknetv4.predict.single_frame_predict:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]

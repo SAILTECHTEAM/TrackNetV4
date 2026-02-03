@@ -7,9 +7,7 @@ import torch
 import os
 from tqdm import tqdm
 import argparse
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from model.tracknet_v4 import TrackNet
+from tracknetv4.model.tracknet_v4 import TrackNet
 
 
 class TrackNetPredictor:
@@ -19,7 +17,7 @@ class TrackNetPredictor:
         self.threshold = threshold
 
         checkpoint = torch.load(model_path, map_location=self.device)
-        state_dict = checkpoint.get('model_state_dict', checkpoint)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.eval()
 
@@ -80,7 +78,7 @@ class SegmentedVideoProcessor:
         groups = []
         for i in range(0, len(frames) - 2, 3):
             if i + 3 <= len(frames):
-                groups.append(frames[i:i + 3])
+                groups.append(frames[i : i + 3])
         return groups
 
     def scale_coordinates(self, coords, original_size):
@@ -101,13 +99,17 @@ class SegmentedVideoProcessor:
         processed_frames = []
         ball_detected_count = 0
 
-        with tqdm(total=len(frame_groups), desc=f"Segment {segment_idx + 1}", unit="groups") as pbar:
+        with tqdm(
+            total=len(frame_groups), desc=f"Segment {segment_idx + 1}", unit="groups"
+        ) as pbar:
             for group in frame_groups:
                 heatmaps = self.predictor.predict(group)
 
                 for frame, heatmap in zip(group, heatmaps):
                     ball_pos_model = self.predictor.detect_ball(heatmap)
-                    ball_pos_original = self.scale_coordinates(ball_pos_model, original_size)
+                    ball_pos_original = self.scale_coordinates(
+                        ball_pos_model, original_size
+                    )
                     processed_frame = self.draw_ball(frame.copy(), ball_pos_original)
                     processed_frames.append(processed_frame)
 
@@ -121,7 +123,7 @@ class SegmentedVideoProcessor:
         return processed_frames, ball_detected_count
 
     def save_segment_video(self, frames, output_path, fps, size):
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, size)
 
         if not out.isOpened():
@@ -132,13 +134,15 @@ class SegmentedVideoProcessor:
         out.release()
 
     def merge_segments(self, segment_files, final_output, fps, size):
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(final_output, fourcc, fps, size)
 
         if not out.isOpened():
             raise RuntimeError(f"Cannot create final video file: {final_output}")
 
-        with tqdm(total=len(segment_files), desc="Merging segments", unit="segments") as pbar:
+        with tqdm(
+            total=len(segment_files), desc="Merging segments", unit="segments"
+        ) as pbar:
             for segment_file in segment_files:
                 cap = cv2.VideoCapture(segment_file)
                 while True:
@@ -164,9 +168,13 @@ class SegmentedVideoProcessor:
         print(f"Detection threshold: {self.predictor.threshold}")
 
         original_size, fps, total_frames = self.extract_video_info(video_path)
-        print(f"Video info: {total_frames} frames, {original_size[0]}x{original_size[1]}, {fps:.1f}FPS")
+        print(
+            f"Video info: {total_frames} frames, {original_size[0]}x{original_size[1]}, {fps:.1f}FPS"
+        )
 
-        num_segments = (total_frames + self.frames_per_segment - 1) // self.frames_per_segment
+        num_segments = (
+            total_frames + self.frames_per_segment - 1
+        ) // self.frames_per_segment
         print(f"Processing in {num_segments} segments")
 
         segment_files = []
@@ -177,11 +185,17 @@ class SegmentedVideoProcessor:
             start_frame = seg_idx * self.frames_per_segment
             frames_to_extract = min(self.frames_per_segment, total_frames - start_frame)
 
-            frames = self.extract_segment_frames(video_path, start_frame, frames_to_extract)
-            processed_frames, ball_count = self.process_segment(frames, original_size, seg_idx)
+            frames = self.extract_segment_frames(
+                video_path, start_frame, frames_to_extract
+            )
+            processed_frames, ball_count = self.process_segment(
+                frames, original_size, seg_idx
+            )
 
             segment_output = f"temp_segment_{seg_idx:03d}.mp4"
-            self.save_segment_video(processed_frames, segment_output, fps, original_size)
+            self.save_segment_video(
+                processed_frames, segment_output, fps, original_size
+            )
             segment_files.append(segment_output)
 
             total_ball_detected += ball_count
@@ -193,7 +207,9 @@ class SegmentedVideoProcessor:
         self.cleanup_segments(segment_files)
 
         detection_rate = (total_ball_detected / total_processed_frames) * 100
-        print(f"Detection stats: {total_ball_detected}/{total_processed_frames} frames ({detection_rate:.1f}%)")
+        print(
+            f"Detection stats: {total_ball_detected}/{total_processed_frames} frames ({detection_rate:.1f}%)"
+        )
 
         return output_path
 
@@ -231,7 +247,7 @@ def main():
             model_path,
             dot_size=RED_DOT_SIZE,
             frames_per_segment=FRAMES_PER_SEGMENT,
-            threshold=DETECTION_THRESHOLD
+            threshold=DETECTION_THRESHOLD,
         )
         output_path = processor.process_video(input_video, output_video)
         print("=" * 60)
