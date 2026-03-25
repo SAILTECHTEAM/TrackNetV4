@@ -9,9 +9,9 @@ from tracknetv4.model.tracknet_v4 import TrackNet
 
 
 class TrackNetPredictor:
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, num_frames=3):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = TrackNet().to(self.device)
+        self.model = TrackNet(num_frames=num_frames).to(self.device)
 
         if model_path:
             checkpoint = torch.load(model_path, map_location=self.device)

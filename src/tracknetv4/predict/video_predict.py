@@ -11,9 +11,10 @@ from tracknetv4.model.tracknet_v4 import TrackNet
 
 
 class TrackNetPredictor:
-    def __init__(self, model_path, threshold=0.5):
+    def __init__(self, model_path, threshold=0.5, num_frames=3):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = TrackNet().to(self.device)
+        self.num_frames = num_frames
+        self.model = TrackNet(num_frames=num_frames).to(self.device)
         self.threshold = threshold
 
         checkpoint = torch.load(model_path, map_location=self.device)
@@ -22,11 +23,16 @@ class TrackNetPredictor:
         self.model.eval()
 
     def preprocess_frames(self, frames):
+        if len(frames) != self.num_frames:
+            raise ValueError(
+                f"Expected {self.num_frames} frames, got {len(frames)}"
+            )
         processed = []
         for frame in frames:
             frame = cv2.resize(frame, (512, 288))
             frame = torch.from_numpy(frame.astype(np.float32) / 255.0).permute(2, 0, 1)
             processed.append(frame)
+        # (num_frames*3, 288, 512) → (1, num_frames*3, 288, 512)
         return torch.cat(processed, dim=0).unsqueeze(0).to(self.device)
 
     def predict(self, frames):
@@ -43,13 +49,16 @@ class TrackNetPredictor:
 
 
 class SegmentedVideoProcessor:
-    def __init__(self, model_path, dot_size=3, frames_per_segment=150, threshold=0.5):
-        self.predictor = TrackNetPredictor(model_path, threshold)
+    def __init__(self, model_path, dot_size=3, frames_per_segment=150,
+                 threshold=0.5, num_frames=3):
+        self.num_frames = num_frames
+        self.predictor = TrackNetPredictor(model_path, threshold, num_frames)
         self.dot_size = dot_size
         self.frames_per_segment = self._adjust_segment_size(frames_per_segment)
 
     def _adjust_segment_size(self, frames):
-        return frames - (frames % 3) if frames % 3 != 0 else frames
+        remainder = frames % self.num_frames
+        return frames - remainder if remainder != 0 else frames
 
     def extract_video_info(self, video_path):
         cap = cv2.VideoCapture(video_path)
@@ -76,9 +85,9 @@ class SegmentedVideoProcessor:
 
     def group_frames(self, frames):
         groups = []
-        for i in range(0, len(frames) - 2, 3):
-            if i + 3 <= len(frames):
-                groups.append(frames[i : i + 3])
+        for i in range(0, len(frames) - self.num_frames + 1, self.num_frames):
+            if i + self.num_frames <= len(frames):
+                groups.append(frames[i: i + self.num_frames])
         return groups
 
     def scale_coordinates(self, coords, original_size):
@@ -177,6 +186,13 @@ class SegmentedVideoProcessor:
         ) // self.frames_per_segment
         print(f"Processing in {num_segments} segments")
 
+        usable_segments = sum(
+            1 for i in range(num_segments)
+            if min(self.frames_per_segment,
+                   total_frames - i * self.frames_per_segment) >= self.num_frames
+        )
+        print(f"Processing in {num_segments} segments ({usable_segments} usable)")
+
         segment_files = []
         total_ball_detected = 0
         total_processed_frames = 0
@@ -185,6 +201,14 @@ class SegmentedVideoProcessor:
             start_frame = seg_idx * self.frames_per_segment
             frames_to_extract = min(self.frames_per_segment, total_frames - start_frame)
 
+            # Skip segments too small to form even one group of num_frames
+            if frames_to_extract < self.num_frames:
+                print(
+                    f"Segment {seg_idx + 1}: Skipping "
+                    f"({frames_to_extract} frames, need at least {self.num_frames})"
+                )
+                continue
+            
             frames = self.extract_segment_frames(
                 video_path, start_frame, frames_to_extract
             )
@@ -222,6 +246,7 @@ def main():
     RED_DOT_SIZE = 7
     FRAMES_PER_SEGMENT = 150
     DETECTION_THRESHOLD = 0.2
+    NUM_FRAMES = 3
 
     print("=" * 60)
     print("Badminton Shuttlecock Detection & Tracking System")
@@ -248,6 +273,7 @@ def main():
             dot_size=RED_DOT_SIZE,
             frames_per_segment=FRAMES_PER_SEGMENT,
             threshold=DETECTION_THRESHOLD,
+            num_frames=NUM_FRAMES
         )
         output_path = processor.process_video(input_video, output_video)
         print("=" * 60)
